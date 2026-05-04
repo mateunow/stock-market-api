@@ -15,10 +15,10 @@ import java.util.Map;
 @Service
 public class StockMarketService {
 
-    private static final String BANK_KEY          = "bank:stocks";
-    private static final String WALLET_KEY_PREFIX  = "wallet:";
-    private static final String LOG_KEY            = "audit:log";
-    private static final int    MAX_RETRIES        = 20;
+    private static final String BANK_KEY         = "bank:stocks";
+    private static final String WALLET_KEY_PREFIX = "wallet:";
+    private static final String LOG_KEY           = "audit:log";
+    private static final int    MAX_RETRIES       = 20;
 
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -159,10 +159,7 @@ public class StockMarketService {
     // ── Audit log ─────────────────────────────────────────────────────────────
 
     public List<LogEntry> getLog() {
-        Long size = redisTemplate.opsForList().size(LOG_KEY);
-        if (size == null || size == 0) return List.of();
-
-        List<Object> raw = redisTemplate.opsForList().range(LOG_KEY, 0, size - 1);
+        List<Object> raw = redisTemplate.opsForList().range(LOG_KEY, 0, -1);
         List<LogEntry> entries = new ArrayList<>();
         if (raw != null) {
             for (Object o : raw) {

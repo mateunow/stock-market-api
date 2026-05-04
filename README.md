@@ -1,5 +1,9 @@
 # Stock Market Simulator
 
+> **Recruitment task** for the Software Development Intern position at [Remitly](https://www.remitly.com) (Kraków, 2026).
+
+---
+
 A simplified stock market REST API built with **Spring Boot 3**, backed by **Redis** for shared state, and deployed as three application instances behind an **Nginx** load balancer — providing high availability even when individual instances are killed via `POST /chaos`.
 
 ## Architecture
@@ -30,6 +34,7 @@ All state lives in Redis, so any instance can handle any request. When one insta
 ```bash
 chmod +x start.sh
 ./start.sh <PORT>
+
 # Example:
 ./start.sh 9000
 ```
@@ -37,6 +42,7 @@ chmod +x start.sh
 ### Windows
 ```bat
 start.bat <PORT>
+
 REM Example:
 start.bat 9000
 ```
@@ -125,7 +131,7 @@ Kills the instance that handles this request. The system remains available via t
 
 **Redis as the single source of truth** — no in-memory state in the application, making horizontal scaling trivial and ensuring consistency across all instances.
 
-**Optimistic locking with WATCH/MULTI/EXEC** — buy and sell operations use Redis transactions with a retry loop. The WATCH is issued inside the same `SessionCallback` as the MULTI/EXEC, guaranteeing atomicity even with concurrent requests hitting different app instances simultaneously.
+**Optimistic locking with WATCH/MULTI/EXEC** — buy and sell operations use Redis transactions with a retry loop. The WATCH is issued inside the same `SessionCallback` as the MULTI/EXEC, guaranteeing atomicity even under concurrent requests hitting different app instances simultaneously.
 
 **Three app instances behind Nginx** — satisfies the high-availability requirement: killing one still leaves two healthy instances serving traffic. `restart: always` ensures the killed instance recovers automatically.
 
