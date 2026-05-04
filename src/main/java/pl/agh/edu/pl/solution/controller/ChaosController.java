@@ -8,7 +8,6 @@ public class ChaosController {
 
     @PostMapping("/chaos")
     public void chaos() {
-        // Kill this JVM instance — other instances behind the load balancer keep running
         Runtime.getRuntime().halt(1);
     }
 }

@@ -26,7 +26,7 @@ public class StockMarketService {
         this.redisTemplate = redisTemplate;
     }
 
-    // ── Bank ──────────────────────────────────────────────────────────────────
+    // ── Bank
 
     public List<StockEntry> getBankStocks() {
         Map<Object, Object> entries = redisTemplate.opsForHash().entries(BANK_KEY);
@@ -51,7 +51,7 @@ public class StockMarketService {
         return redisTemplate.opsForHash().hasKey(BANK_KEY, stockName);
     }
 
-    // ── Wallet ────────────────────────────────────────────────────────────────
+    // ── Wallet
 
     public List<StockEntry> getWalletStocks(String walletId) {
         Map<Object, Object> entries = redisTemplate.opsForHash().entries(walletKey(walletId));
@@ -63,7 +63,7 @@ public class StockMarketService {
         return val == null ? 0L : Long.parseLong(val.toString());
     }
 
-    // ── Trade operations ──────────────────────────────────────────────────────
+    // ── Trade operations
 
     /**
      * Atomically transfers one unit from bank to wallet.
@@ -156,7 +156,7 @@ public class StockMarketService {
         return SellResult.INSUFFICIENT_WALLET_STOCK;
     }
 
-    // ── Audit log ─────────────────────────────────────────────────────────────
+    // ── Audit log
 
     public List<LogEntry> getLog() {
         List<Object> raw = redisTemplate.opsForList().range(LOG_KEY, 0, -1);
@@ -172,7 +172,7 @@ public class StockMarketService {
         return entries;
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── Helpers
 
     private void appendLog(String type, String walletId, String stockName) {
         redisTemplate.opsForList().rightPush(LOG_KEY, type + "|" + walletId + "|" + stockName);
@@ -190,7 +190,7 @@ public class StockMarketService {
         return list;
     }
 
-    // ── Result enums ──────────────────────────────────────────────────────────
+    // ── Result enums
 
     public enum BuyResult  { OK, STOCK_NOT_FOUND, INSUFFICIENT_BANK_STOCK }
     public enum SellResult { OK, STOCK_NOT_FOUND, INSUFFICIENT_WALLET_STOCK }

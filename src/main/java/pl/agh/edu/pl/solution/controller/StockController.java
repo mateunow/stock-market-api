@@ -17,7 +17,7 @@ public class StockController {
         this.service = service;
     }
 
-    // ── POST /wallets/{wallet_id}/stocks/{stock_name} ─────────────────────────
+    // ── POST /wallets/{wallet_id}/stocks/{stock_name}
 
     record TradeRequest(String type) {}
 
@@ -43,7 +43,7 @@ public class StockController {
         return ResponseEntity.badRequest().build();
     }
 
-    // ── GET /wallets/{wallet_id} ──────────────────────────────────────────────
+    // ── GET /wallets/{wallet_id}
 
     @GetMapping("/wallets/{wallet_id}")
     public ResponseEntity<Map<String, Object>> getWallet(
@@ -53,7 +53,7 @@ public class StockController {
         return ResponseEntity.ok(Map.of("id", walletId, "stocks", stocks));
     }
 
-    // ── GET /wallets/{wallet_id}/stocks/{stock_name} ──────────────────────────
+    // ── GET /wallets/{wallet_id}/stocks/{stock_name}
 
     @GetMapping("/wallets/{wallet_id}/stocks/{stock_name}")
     public ResponseEntity<Long> getWalletStock(
@@ -66,14 +66,14 @@ public class StockController {
         return ResponseEntity.ok(service.getWalletStockQuantity(walletId, stockName));
     }
 
-    // ── GET /stocks ───────────────────────────────────────────────────────────
+    // ── GET /stocks
 
     @GetMapping("/stocks")
     public ResponseEntity<Map<String, Object>> getStocks() {
         return ResponseEntity.ok(Map.of("stocks", service.getBankStocks()));
     }
 
-    // ── POST /stocks ──────────────────────────────────────────────────────────
+    // ── POST /stocks
 
     record SetStocksRequest(List<StockEntry> stocks) {}
 
