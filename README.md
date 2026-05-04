@@ -1,6 +1,6 @@
 # Stock Market Simulator
 
-A simplified stock market REST API built with **Spring Boot 4**, backed by **Redis** for shared state, and deployed as three application instances behind an **Nginx** load balancer — providing high availability even when individual instances are killed via `POST /chaos`.
+A simplified stock market REST API built with **Spring Boot 3**, backed by **Redis** for shared state, and deployed as three application instances behind an **Nginx** load balancer — providing high availability even when individual instances are killed via `POST /chaos`.
 
 ## Architecture
 
@@ -17,17 +17,18 @@ Nginx (load balancer, round-robin)
        Redis (shared state: bank, wallets, audit log)
 ```
 
-All state lives in Redis, so any instance can handle any request. When one instance is killed by `POST /chaos`, Nginx routes traffic to the remaining two (with `restart: always`, Docker brings the killed instance back up automatically).
+All state lives in Redis, so any instance can handle any request. When one instance is killed by `POST /chaos`, Nginx routes traffic to the remaining two. With `restart: always`, Docker also brings the killed instance back up automatically.
 
 ## Requirements
 
-- Docker (with Docker Compose v2)
-- No Java installation needed — the app is built inside Docker
+- Docker with Docker Compose v2
+- No Java installation needed — the app is compiled inside Docker via a multi-stage build
 
 ## Starting the application
 
 ### Linux / macOS
 ```bash
+chmod +x start.sh
 ./start.sh <PORT>
 # Example:
 ./start.sh 9000
@@ -36,7 +37,7 @@ All state lives in Redis, so any instance can handle any request. When one insta
 ### Windows
 ```bat
 start.bat <PORT>
-# Example:
+REM Example:
 start.bat 9000
 ```
 
@@ -48,21 +49,21 @@ The API will be available at `http://localhost:<PORT>`.
 docker compose down
 ```
 
+---
+
 ## API Reference
 
 ### `POST /wallets/{wallet_id}/stocks/{stock_name}`
-Buy or sell a single unit of a stock.
+Buy or sell a single unit of a stock. Creates the wallet automatically if it doesn't exist yet.
 
 **Body:** `{"type": "buy"}` or `{"type": "sell"}`
 
 | Condition | Status |
 |-----------|--------|
 | Success | 200 |
-| Stock doesn't exist in bank | 404 |
+| Stock doesn't exist in the bank | 404 |
 | Buy — bank has 0 of this stock | 400 |
 | Sell — wallet has 0 of this stock | 400 |
-
-If the wallet doesn't exist it is created automatically on first operation.
 
 ---
 
@@ -77,7 +78,7 @@ Returns the current state of a wallet.
 ---
 
 ### `GET /wallets/{wallet_id}/stocks/{stock_name}`
-Returns quantity of a specific stock in a wallet.
+Returns the quantity of a specific stock held in a wallet. Returns 404 if the stock doesn't exist in the bank.
 
 **Response:** `5`
 
@@ -94,19 +95,19 @@ Returns current bank inventory.
 ---
 
 ### `POST /stocks`
-Replaces the entire bank state.
+Replaces the entire bank state atomically.
 
 **Body:**
 ```json
 {"stocks": [{"name": "AAPL", "quantity": 100}, {"name": "GOOG", "quantity": 50}]}
 ```
 
-**Response:** 200
+**Response:** `200`
 
 ---
 
 ### `GET /log`
-Returns the full audit log of successful wallet operations (bank operations excluded).
+Returns the full audit log of successful wallet operations (bank operations excluded), in order of occurrence.
 
 **Response:**
 ```json
@@ -116,12 +117,18 @@ Returns the full audit log of successful wallet operations (bank operations excl
 ---
 
 ### `POST /chaos`
-Kills the instance that handles this request. The system remains available via the other instances.
+Kills the instance that handles this request. The system remains available via the remaining instances.
+
+---
 
 ## Design decisions
 
-- **Redis WATCH/MULTI/EXEC** — optimistic locking ensures buy/sell operations are atomic across multiple app instances without race conditions.
-- **Three app instances** — satisfies the high-availability requirement: killing one still leaves two running.
-- **`restart: always`** — Docker automatically restarts a killed instance, keeping the pool healthy long-term.
-- **Nginx `proxy_next_upstream`** — if the upstream app dies mid-request (e.g. during `/chaos`), Nginx retries on the next healthy instance transparently to the client.
-- **Redis as the single source of truth** — no in-memory state in the app, so horizontal scaling is trivial.
+**Redis as the single source of truth** — no in-memory state in the application, making horizontal scaling trivial and ensuring consistency across all instances.
+
+**Optimistic locking with WATCH/MULTI/EXEC** — buy and sell operations use Redis transactions with a retry loop. The WATCH is issued inside the same `SessionCallback` as the MULTI/EXEC, guaranteeing atomicity even with concurrent requests hitting different app instances simultaneously.
+
+**Three app instances behind Nginx** — satisfies the high-availability requirement: killing one still leaves two healthy instances serving traffic. `restart: always` ensures the killed instance recovers automatically.
+
+**`proxy_next_upstream`** — if the upstream app process dies mid-request (e.g. during `POST /chaos`), Nginx retries on the next healthy instance, making the failure transparent to the caller.
+
+**Multi-stage Dockerfile** — the builder stage compiles the JAR using Gradle; the final image contains only the JRE and the JAR, keeping the image size minimal.
