@@ -5,18 +5,24 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import pl.agh.edu.pl.solution.service.StockMarketService;
 import pl.agh.edu.pl.solution.model.LogEntry;
 import pl.agh.edu.pl.solution.model.StockEntry;
+import pl.agh.edu.pl.solution.service.StockMarketService;
 
 import java.util.List;
 
-import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -25,7 +31,7 @@ class StockMarketControllerTest {
     @Autowired
     MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     StockMarketService service;
 
     @BeforeEach
@@ -113,11 +119,20 @@ class StockMarketControllerTest {
 
     @Test
     void getWalletStock_returnsQuantity() throws Exception {
+        when(service.stockExistsInBank("AAPL")).thenReturn(true);
         when(service.getWalletStockQuantity("w1", "AAPL")).thenReturn(7L);
 
         mockMvc.perform(get("/wallets/w1/stocks/AAPL"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("7"));
+    }
+
+    @Test
+    void getWalletStock_unknownStock_returns404() throws Exception {
+        when(service.stockExistsInBank("UNKNOWN")).thenReturn(false);
+
+        mockMvc.perform(get("/wallets/w1/stocks/UNKNOWN"))
+                .andExpect(status().isNotFound());
     }
 
     // ── GET /stocks ───────────────────────────────────────────────────────────

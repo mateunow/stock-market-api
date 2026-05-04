@@ -11,15 +11,14 @@ import pl.agh.edu.pl.solution.model.StockEntry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Service
 public class StockMarketService {
 
-    // Redis key prefixes
-    private static final String BANK_KEY = "bank:stocks";          // Hash: stockName -> quantity
-    private static final String WALLET_KEY_PREFIX = "wallet:";     // Hash: stockName -> quantity
-    private static final String LOG_KEY = "audit:log";             // List of serialized log entries
+    private static final String BANK_KEY          = "bank:stocks";
+    private static final String WALLET_KEY_PREFIX  = "wallet:";
+    private static final String LOG_KEY            = "audit:log";
+    private static final int    MAX_RETRIES        = 20;
 
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -34,12 +33,8 @@ public class StockMarketService {
         return toStockList(entries);
     }
 
-    /**
-     * Replaces the entire bank state atomically.
-     * Zeros existing stocks then sets new quantities.
-     */
     public void setBankStocks(List<StockEntry> stocks) {
-        redisTemplate.execute(new SessionCallback<>() {
+        redisTemplate.execute(new SessionCallback<Object>() {
             @Override
             public Object execute(RedisOperations operations) throws DataAccessException {
                 operations.multi();
@@ -52,98 +47,110 @@ public class StockMarketService {
         });
     }
 
-    // ── Wallet ────────────────────────────────────────────────────────────────
-
     public boolean stockExistsInBank(String stockName) {
         return redisTemplate.opsForHash().hasKey(BANK_KEY, stockName);
     }
+
+    // ── Wallet ────────────────────────────────────────────────────────────────
 
     public List<StockEntry> getWalletStocks(String walletId) {
         Map<Object, Object> entries = redisTemplate.opsForHash().entries(walletKey(walletId));
         return toStockList(entries);
     }
 
-    public Long getWalletStockQuantity(String walletId, String stockName) {
+    public long getWalletStockQuantity(String walletId, String stockName) {
         Object val = redisTemplate.opsForHash().get(walletKey(walletId), stockName);
         return val == null ? 0L : Long.parseLong(val.toString());
     }
 
+    // ── Trade operations ──────────────────────────────────────────────────────
+
     /**
-     * Buy: bank → wallet.
-     * Returns false if bank has 0 of this stock.
-     * Returns null if stock doesn't exist in bank at all.
+     * Atomically transfers one unit from bank to wallet.
+     * Uses optimistic locking (WATCH/MULTI/EXEC) — safe across multiple instances.
      */
     public BuyResult buy(String walletId, String stockName) {
         if (!stockExistsInBank(stockName)) {
             return BuyResult.STOCK_NOT_FOUND;
         }
 
-        // Optimistic-loop with WATCH to ensure atomicity across instances
-        for (int attempt = 0; attempt < 10; attempt++) {
-            redisTemplate.watch(BANK_KEY);
-            Object raw = redisTemplate.opsForHash().get(BANK_KEY, stockName);
-            long bankQty = raw == null ? 0L : Long.parseLong(raw.toString());
-
-            if (bankQty <= 0) {
-                redisTemplate.unwatch();
-                return BuyResult.INSUFFICIENT_BANK_STOCK;
-            }
-
-            @SuppressWarnings("unchecked")
-            List<Object> result = (List<Object>) redisTemplate.execute(new SessionCallback<>() {
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            BuyResult result = redisTemplate.execute(new SessionCallback<BuyResult>() {
                 @Override
-                public Object execute(RedisOperations operations) throws DataAccessException {
+                @SuppressWarnings("unchecked")
+                public BuyResult execute(RedisOperations operations) throws DataAccessException {
+                    operations.watch(BANK_KEY);
+
+                    Object raw = operations.opsForHash().get(BANK_KEY, stockName);
+                    long bankQty = raw == null ? 0L : Long.parseLong(raw.toString());
+
+                    if (bankQty <= 0) {
+                        operations.unwatch();
+                        return BuyResult.INSUFFICIENT_BANK_STOCK;
+                    }
+
                     operations.multi();
                     operations.opsForHash().increment(BANK_KEY, stockName, -1);
                     operations.opsForHash().increment(walletKey(walletId), stockName, 1);
-                    return operations.exec();
+                    List<Object> exec = operations.exec();
+
+                    return exec != null ? BuyResult.OK : null; // null = WATCH fired, retry
                 }
             });
 
-            if (result != null) {
+            if (result == BuyResult.OK) {
                 appendLog("buy", walletId, stockName);
                 return BuyResult.OK;
             }
-            // WATCH fired – retry
+            if (result == BuyResult.INSUFFICIENT_BANK_STOCK) {
+                return BuyResult.INSUFFICIENT_BANK_STOCK;
+            }
+            // result == null: WATCH fired due to concurrent modification, retry
         }
-        return BuyResult.INSUFFICIENT_BANK_STOCK; // edge-case safety
+        return BuyResult.INSUFFICIENT_BANK_STOCK;
     }
 
     /**
-     * Sell: wallet → bank.
-     * Returns false if wallet has 0 of this stock.
-     * Returns null if stock doesn't exist in bank at all.
+     * Atomically transfers one unit from wallet to bank.
+     * Uses optimistic locking (WATCH/MULTI/EXEC) — safe across multiple instances.
      */
     public SellResult sell(String walletId, String stockName) {
         if (!stockExistsInBank(stockName)) {
             return SellResult.STOCK_NOT_FOUND;
         }
 
-        for (int attempt = 0; attempt < 10; attempt++) {
-            String wKey = walletKey(walletId);
-            redisTemplate.watch(wKey);
-            Object raw = redisTemplate.opsForHash().get(wKey, stockName);
-            long walletQty = raw == null ? 0L : Long.parseLong(raw.toString());
+        String wKey = walletKey(walletId);
 
-            if (walletQty <= 0) {
-                redisTemplate.unwatch();
-                return SellResult.INSUFFICIENT_WALLET_STOCK;
-            }
-
-            @SuppressWarnings("unchecked")
-            List<Object> result = (List<Object>) redisTemplate.execute(new SessionCallback<>() {
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            SellResult result = redisTemplate.execute(new SessionCallback<SellResult>() {
                 @Override
-                public Object execute(RedisOperations operations) throws DataAccessException {
+                @SuppressWarnings("unchecked")
+                public SellResult execute(RedisOperations operations) throws DataAccessException {
+                    operations.watch(wKey);
+
+                    Object raw = operations.opsForHash().get(wKey, stockName);
+                    long walletQty = raw == null ? 0L : Long.parseLong(raw.toString());
+
+                    if (walletQty <= 0) {
+                        operations.unwatch();
+                        return SellResult.INSUFFICIENT_WALLET_STOCK;
+                    }
+
                     operations.multi();
                     operations.opsForHash().increment(wKey, stockName, -1);
                     operations.opsForHash().increment(BANK_KEY, stockName, 1);
-                    return operations.exec();
+                    List<Object> exec = operations.exec();
+
+                    return exec != null ? SellResult.OK : null;
                 }
             });
 
-            if (result != null) {
+            if (result == SellResult.OK) {
                 appendLog("sell", walletId, stockName);
                 return SellResult.OK;
+            }
+            if (result == SellResult.INSUFFICIENT_WALLET_STOCK) {
+                return SellResult.INSUFFICIENT_WALLET_STOCK;
             }
         }
         return SellResult.INSUFFICIENT_WALLET_STOCK;
@@ -154,19 +161,18 @@ public class StockMarketService {
     public List<LogEntry> getLog() {
         Long size = redisTemplate.opsForList().size(LOG_KEY);
         if (size == null || size == 0) return List.of();
+
         List<Object> raw = redisTemplate.opsForList().range(LOG_KEY, 0, size - 1);
-        List<LogEntry> result = new ArrayList<>();
+        List<LogEntry> entries = new ArrayList<>();
         if (raw != null) {
             for (Object o : raw) {
-                String s = o.toString();
-                // format: "type|walletId|stockName"
-                String[] parts = s.split("\\|", 3);
+                String[] parts = o.toString().split("\\|", 3);
                 if (parts.length == 3) {
-                    result.add(new LogEntry(parts[0], parts[1], parts[2]));
+                    entries.add(new LogEntry(parts[0], parts[1], parts[2]));
                 }
             }
         }
-        return result;
+        return entries;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -189,6 +195,6 @@ public class StockMarketService {
 
     // ── Result enums ──────────────────────────────────────────────────────────
 
-    public enum BuyResult { OK, STOCK_NOT_FOUND, INSUFFICIENT_BANK_STOCK }
+    public enum BuyResult  { OK, STOCK_NOT_FOUND, INSUFFICIENT_BANK_STOCK }
     public enum SellResult { OK, STOCK_NOT_FOUND, INSUFFICIENT_WALLET_STOCK }
 }

@@ -60,6 +60,9 @@ public class StockController {
             @PathVariable("wallet_id") String walletId,
             @PathVariable("stock_name") String stockName) {
 
+        if (!service.stockExistsInBank(stockName)) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(service.getWalletStockQuantity(walletId, stockName));
     }
 
